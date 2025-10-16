@@ -16,11 +16,41 @@ const CHAT_ID = process.env.CHAT_ID || '-1003009155498'; // Your channel ID
 
 const TELEGRAM_API = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
+// Helper function to send Telegram notifications
+async function notifyTelegram(message) {
+  try {
+    await axios.post(`${TELEGRAM_API}/sendMessage`, {
+      chat_id: CHAT_ID,
+      text: message,
+      parse_mode: 'HTML'
+    });
+    console.log('[TELEGRAM] Notification sent');
+  } catch (error) {
+    console.error('[TELEGRAM] Notification failed:', error.message);
+  }
+}
+
 // ============================================
 // Multer setup for file uploads
 // ============================================
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const uploadsDir = 'uploads';
+    if (!fs.existsSync(uploadsDir)) {
+      fs.mkdirSync(uploadsDir, { recursive: true });
+    }
+    cb(null, uploadsDir);
+  },
+  filename: (req, file, cb) => {
+    // Keep original filename with timestamp to avoid collisions
+    const timestamp = Date.now();
+    const originalName = file.originalname || 'audio.mp3';
+    cb(null, `${timestamp}-${originalName}`);
+  }
+});
+
 const upload = multer({
-  dest: 'uploads/',
+  storage: storage,
   limits: { fileSize: 50 * 1024 * 1024 } // 50MB limit
 });
 
@@ -38,6 +68,7 @@ app.get('/', (req, res) => {
     version: '1.0.0',
     endpoints: {
       upload: 'POST /upload',
+      tracks: 'GET /tracks',
       health: 'GET /health'
     }
   });
@@ -46,6 +77,42 @@ app.get('/', (req, res) => {
 app.get('/health', (req, res) => {
   res.json({ ok: true, status: 'healthy', timestamp: new Date().toISOString() });
 });
+
+// ============================================
+// 🎵 TRACKS ENDPOINT - List all uploaded files
+// ============================================
+app.get('/tracks', (req, res) => {
+  try {
+    const uploadsDir = path.join(__dirname, 'uploads');
+    
+    // Create uploads directory if it doesn't exist
+    if (!fs.existsSync(uploadsDir)) {
+      fs.mkdirSync(uploadsDir, { recursive: true });
+      return res.json([]);
+    }
+    
+    // Read all .mp3 files from uploads directory
+    const files = fs.readdirSync(uploadsDir)
+      .filter(file => file.toLowerCase().endsWith('.mp3'))
+      .map(file => {
+        const url = `${req.protocol}://${req.get('host')}/uploads/${file}`;
+        return {
+          name: file,
+          url: url
+        };
+      });
+    
+    console.log(`[TRACKS] Returning ${files.length} tracks`);
+    res.json(files);
+    
+  } catch (error) {
+    console.error('[TRACKS] Error:', error.message);
+    res.status(500).json({ error: 'Failed to read tracks', message: error.message });
+  }
+});
+
+// Serve static files from uploads directory
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // ============================================
 // 🎵 UPLOAD ENDPOINT
@@ -108,6 +175,17 @@ app.post('/upload', upload.single('audio'), async (req, res) => {
     const downloadUrl = `https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath_tg}`;
 
     console.log(`[UPLOAD] Success! File ID: ${fileId}`);
+    console.log('[UPLOAD READY] File uploaded and stored successfully');
+    
+    // Send Telegram notification
+    await notifyTelegram(
+      `🎵 <b>Upload Successful</b>\n\n` +
+      `🎶 Title: ${title}\n` +
+      `🎤 Artist: ${artist}\n` +
+      `📊 Size: ${Math.round(req.file.size / 1024 / 1024 * 100) / 100} MB\n` +
+      `⏱️ Duration: ${audioData.duration || 0}s\n` +
+      `🆔 File ID: ${fileId}`
+    );
     
     // Return response
     res.json({
@@ -120,6 +198,8 @@ app.post('/upload', upload.single('audio'), async (req, res) => {
       file_size: audioData.file_size || req.file.size,
       message: 'Upload successful'
     });
+    
+    console.log('[UPLOAD FIXED] Upload completed with Telegram notification');
 
   } catch (error) {
     console.error('[UPLOAD] Error:', error.message);
