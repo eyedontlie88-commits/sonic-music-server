@@ -1,0 +1,14 @@
+node_modules
+npm-debug.log
+yarn-error.log
+.env
+.env.local
+.git
+.gitignore
+README.md
+test-upload.sh
+uploads/*.mp3
+uploads/*.m4a
+uploads/*.wav
+.DS_Store
+Thumbs.db
